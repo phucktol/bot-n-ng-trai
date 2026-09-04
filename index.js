@@ -197,3 +197,4 @@ bot.callbackQuery(/harvest_(\d+)/, async (ctx) => {
 // ====== Khởi động bot ======
 bot.start();
 console.log('🌾 Bot nông trại đang chạy... (có hệ thống mời bạn bè)');
+// build test 2
