@@ -6,7 +6,12 @@ const { Bot, InlineKeyboard } = require('grammy');
 const bot = new Bot(process.env.BOT_TOKEN);
 
 // ====== Lưu dữ liệu vào file farms.json thay vì chỉ lưu RAM ======
-const DATA_FILE = './farms.json';
+// Trên Railway: lưu vào /app/data (thư mục Volume, không bị xóa khi deploy lại)
+// Trên máy local: lưu ngay tại thư mục dự án (vì không có Volume)
+const fsSync = require('fs');
+const DATA_DIR = fsSync.existsSync('/app') ? '/app/data' : '.';
+if (!fsSync.existsSync(DATA_DIR)) fsSync.mkdirSync(DATA_DIR, { recursive: true });
+const DATA_FILE = `${DATA_DIR}/farms.json`;
 
 // Đọc dữ liệu từ file lúc bot khởi động (nếu file chưa có, dùng object rỗng)
 let farms = {};
