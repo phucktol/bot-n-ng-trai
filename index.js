@@ -1,23 +1,19 @@
-// index.js — Bot Nông Trại có lưu dữ liệu vĩnh viễn (file JSON)
+// index.js — Bot Nông Trại có Volume + hệ thống mời bạn bè (referral)
 require('dotenv').config();
-const fs = require('fs');
+const fsSync = require('fs');
 const { Bot, InlineKeyboard } = require('grammy');
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
-// ====== Lưu dữ liệu vào file farms.json thay vì chỉ lưu RAM ======
-// Trên Railway: lưu vào /app/data (thư mục Volume, không bị xóa khi deploy lại)
-// Trên máy local: lưu ngay tại thư mục dự án (vì không có Volume)
-const fsSync = require('fs');
+// ====== Lưu dữ liệu vào file farms.json ======
 const DATA_DIR = fsSync.existsSync('/app') ? '/app/data' : '.';
 if (!fsSync.existsSync(DATA_DIR)) fsSync.mkdirSync(DATA_DIR, { recursive: true });
 const DATA_FILE = `${DATA_DIR}/farms.json`;
 
-// Đọc dữ liệu từ file lúc bot khởi động (nếu file chưa có, dùng object rỗng)
 let farms = {};
-if (fs.existsSync(DATA_FILE)) {
+if (fsSync.existsSync(DATA_FILE)) {
   try {
-    farms = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
+    farms = JSON.parse(fsSync.readFileSync(DATA_FILE, 'utf-8'));
     console.log('✅ Đã tải dữ liệu cũ từ farms.json');
   } catch (e) {
     console.log('⚠️ File farms.json bị lỗi, tạo dữ liệu mới');
@@ -25,24 +21,39 @@ if (fs.existsSync(DATA_FILE)) {
   }
 }
 
-// Hàm lưu dữ liệu xuống file — gọi mỗi khi có thay đổi
 function saveFarms() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(farms, null, 2), 'utf-8');
+  fsSync.writeFileSync(DATA_FILE, JSON.stringify(farms, null, 2), 'utf-8');
 }
 
-function getFarm(userId) {
-  if (!farms[userId]) {
-    farms[userId] = {
-      money: 100,
+// Phần thưởng referral
+const REFERRAL_BONUS_NEW_USER = 50;   // người được mời nhận thêm
+const REFERRAL_BONUS_REFERRER = 30;   // người mời nhận
+
+// userId truyền vào dạng string vì key object trong JS luôn là string
+function getFarm(userId, referredBy = null) {
+  const key = String(userId);
+  if (!farms[key]) {
+    const startMoney = referredBy ? 100 + REFERRAL_BONUS_NEW_USER : 100;
+    farms[key] = {
+      money: startMoney,
       plots: [
         { crop: null, plantedAt: null },
         { crop: null, plantedAt: null },
         { crop: null, plantedAt: null },
       ],
+      referredBy: referredBy,   // ai đã mời người này
+      referralCount: 0,          // người này đã mời được bao nhiêu người
     };
-    saveFarms(); // lưu ngay khi tạo người chơi mới
+
+    // Nếu có người mời hợp lệ, thưởng cho người mời
+    if (referredBy && farms[String(referredBy)] && String(referredBy) !== key) {
+      farms[String(referredBy)].money += REFERRAL_BONUS_REFERRER;
+      farms[String(referredBy)].referralCount += 1;
+    }
+
+    saveFarms();
   }
-  return farms[userId];
+  return farms[key];
 }
 
 // Loại cây: thời gian trồng (giây) và giá bán
@@ -54,7 +65,7 @@ const CROPS = {
 // ====== Hàm vẽ giao diện nông trại bằng text ======
 function renderFarm(userId) {
   const farm = getFarm(userId);
-  let text = `🌱 *Nông trại của bạn*\n💰 Tiền: ${farm.money}\n\n`;
+  let text = `🌱 *Nông trại của bạn*\n💰 Tiền: ${farm.money}\n👥 Đã mời: ${farm.referralCount} người\n\n`;
 
   const keyboard = new InlineKeyboard();
 
@@ -76,14 +87,43 @@ function renderFarm(userId) {
     }
   });
 
+  keyboard.text('👥 Mời bạn bè', 'invite').row();
   keyboard.text('🔄 Làm mới', 'refresh');
   return { text, keyboard };
 }
 
-// ====== Lệnh /start ======
+// ====== Lệnh /start (có xử lý link mời bạn) ======
 bot.command('start', async (ctx) => {
-  const { text, keyboard } = renderFarm(ctx.from.id);
+  const userId = ctx.from.id;
+  const key = String(userId);
+  const payload = ctx.match; // phần sau ?start= trong link, vd: "123456789"
+
+  const isNewUser = !farms[key];
+  const referredBy = payload && /^\d+$/.test(payload) ? payload : null;
+
+  const farm = getFarm(userId, referredBy);
+
+  if (isNewUser && referredBy && String(referredBy) !== key) {
+    await ctx.reply(`🎉 Bạn được tặng thêm ${REFERRAL_BONUS_NEW_USER} tiền vì được mời vào nông trại!`);
+  }
+
+  const { text, keyboard } = renderFarm(userId);
   await ctx.reply(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
+});
+
+// ====== Bấm nút "Mời bạn bè" ======
+bot.callbackQuery('invite', async (ctx) => {
+  const botUsername = ctx.me.username;
+  const link = `https://t.me/${botUsername}?start=${ctx.from.id}`;
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `👥 *Mời bạn bè vào nông trại*\n\n` +
+    `Gửi link này cho bạn bè. Mỗi người tham gia qua link của bạn:\n` +
+    `• Bạn nhận +${REFERRAL_BONUS_REFERRER} tiền\n` +
+    `• Bạn của bạn nhận +${REFERRAL_BONUS_NEW_USER} tiền\n\n` +
+    `🔗 \`${link}\``,
+    { parse_mode: 'Markdown' }
+  );
 });
 
 // ====== Bấm nút "Làm mới" ======
@@ -119,7 +159,7 @@ bot.callbackQuery(/confirm_(\d+)_(\w+)/, async (ctx) => {
 
   farm.money -= cropInfo.cost;
   farm.plots[plotIndex] = { crop: cropKey, plantedAt: Date.now() };
-  saveFarms(); // 💾 lưu ngay sau khi trồng
+  saveFarms();
 
   const { text, keyboard } = renderFarm(ctx.from.id);
   await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
@@ -147,7 +187,7 @@ bot.callbackQuery(/harvest_(\d+)/, async (ctx) => {
 
   farm.money += cropInfo.sellPrice;
   farm.plots[plotIndex] = { crop: null, plantedAt: null };
-  saveFarms(); // 💾 lưu ngay sau khi thu hoạch
+  saveFarms();
 
   const { text, keyboard } = renderFarm(ctx.from.id);
   await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
@@ -156,4 +196,4 @@ bot.callbackQuery(/harvest_(\d+)/, async (ctx) => {
 
 // ====== Khởi động bot ======
 bot.start();
-console.log('🌾 Bot nông trại đang chạy... (dữ liệu lưu vào farms.json)');
+console.log('🌾 Bot nông trại đang chạy... (có hệ thống mời bạn bè)');
