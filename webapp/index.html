@@ -1,221 +1,57 @@
-// index.js — Bot Nông Trại + Mini App (web) chạy chung 1 server
-require('dotenv').config();
-const fsSync = require('fs');
-const path = require('path');
-const express = require('express');
-const { Bot, InlineKeyboard, Keyboard } = require('grammy');
-
-const bot = new Bot(process.env.BOT_TOKEN);
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'webapp')));
-
-// ====== Lưu dữ liệu vào file farms.json ======
-const DATA_DIR = fsSync.existsSync('/app') ? '/app/data' : '.';
-if (!fsSync.existsSync(DATA_DIR)) fsSync.mkdirSync(DATA_DIR, { recursive: true });
-const DATA_FILE = `${DATA_DIR}/farms.json`;
-
-let farms = {};
-if (fsSync.existsSync(DATA_FILE)) {
-  try {
-    farms = JSON.parse(fsSync.readFileSync(DATA_FILE, 'utf-8'));
-    console.log('✅ Đã tải dữ liệu cũ từ farms.json');
-  } catch (e) {
-    farms = {};
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nông Trại Của Tôi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, sans-serif;
+    background: var(--tg-theme-bg-color, #f0f4e8);
+    color: var(--tg-theme-text-color, #222);
+    padding: 16px;
+    padding-bottom: 40px;
   }
-}
-function saveFarms() {
-  fsSync.writeFileSync(DATA_FILE, JSON.stringify(farms, null, 2), 'utf-8');
-}
-
-const REFERRAL_BONUS_NEW_USER = 50;
-const REFERRAL_BONUS_REFERRER = 30;
-
-function getFarm(userId, referredBy = null) {
-  const key = String(userId);
-  if (!farms[key]) {
-    const startMoney = referredBy ? 100 + REFERRAL_BONUS_NEW_USER : 100;
-    farms[key] = {
-      money: startMoney,
-      plots: [
-        { crop: null, plantedAt: null },
-        { crop: null, plantedAt: null },
-        { crop: null, plantedAt: null },
-      ],
-      referredBy: referredBy,
-      referralCount: 0,
-    };
-    if (referredBy && farms[String(referredBy)] && String(referredBy) !== key) {
-      farms[String(referredBy)].money += REFERRAL_BONUS_REFERRER;
-      farms[String(referredBy)].referralCount += 1;
-    }
-    saveFarms();
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .money {
+    font-size: 16px;
+    color: #d68a00;
+    margin-bottom: 16px;
   }
-  return farms[key];
-}
-
-const CROPS = {
-  carrot: { name: '🥕 Cà rốt', growTime: 30, sellPrice: 15, cost: 5 },
-  wheat: { name: '🌾 Lúa mì', growTime: 60, sellPrice: 35, cost: 10 },
-};
-
-// ============================================================
-// ================== PHẦN BOT (Telegram) ======================
-// ============================================================
-
-function renderFarmText(userId) {
-  const farm = getFarm(userId);
-  let text = `🌱 *Nông trại của bạn*\n💰 Tiền: ${farm.money}\n👥 Đã mời: ${farm.referralCount} người\n\n`;
-  const keyboard = new InlineKeyboard();
-
-  farm.plots.forEach((plot, i) => {
-    if (!plot.crop) {
-      text += `Ô ${i + 1}: [Trống]\n`;
-      keyboard.text(`🌱 Trồng ở ô ${i + 1}`, `plant_${i}`).row();
-    } else {
-      const cropInfo = CROPS[plot.crop];
-      const elapsed = (Date.now() - plot.plantedAt) / 1000;
-      const remaining = Math.max(0, cropInfo.growTime - elapsed);
-      if (remaining <= 0) {
-        text += `Ô ${i + 1}: ${cropInfo.name} — ✅ Sẵn sàng thu hoạch!\n`;
-        keyboard.text(`🌾 Thu hoạch ô ${i + 1}`, `harvest_${i}`).row();
-      } else {
-        text += `Ô ${i + 1}: ${cropInfo.name} — ⏳ còn ${Math.ceil(remaining)}s\n`;
-      }
-    }
-  });
-
-  keyboard.webApp('🎮 Mở nông trại (giao diện đẹp)', process.env.WEBAPP_URL || 'https://example.com').row();
-  keyboard.text('👥 Mời bạn bè', 'invite').row();
-  keyboard.text('🔄 Làm mới', 'refresh');
-  return { text, keyboard };
-}
-
-bot.command('start', async (ctx) => {
-  const userId = ctx.from.id;
-  const key = String(userId);
-  const payload = ctx.match;
-  const isNewUser = !farms[key];
-  const referredBy = payload && /^\d+$/.test(payload) ? payload : null;
-  getFarm(userId, referredBy);
-
-  if (isNewUser && referredBy && String(referredBy) !== key) {
-    await ctx.reply(`🎉 Bạn được tặng thêm ${REFERRAL_BONUS_NEW_USER} tiền vì được mời vào nông trại!`);
+  .plots {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
   }
-
-  const { text, keyboard } = renderFarmText(userId);
-  await ctx.reply(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
-});
-
-bot.callbackQuery('invite', async (ctx) => {
-  const botUsername = ctx.me.username;
-  const link = `https://t.me/${botUsername}?start=${ctx.from.id}`;
-  await ctx.answerCallbackQuery();
-  await ctx.reply(
-    `👥 *Mời bạn bè vào nông trại*\n\nGửi link này cho bạn bè:\n\`${link}\`\n\n` +
-    `• Bạn nhận +${REFERRAL_BONUS_REFERRER} tiền\n• Bạn của bạn nhận +${REFERRAL_BONUS_NEW_USER} tiền`,
-    { parse_mode: 'Markdown' }
-  );
-});
-
-bot.callbackQuery('refresh', async (ctx) => {
-  const { text, keyboard } = renderFarmText(ctx.from.id);
-  await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
-  await ctx.answerCallbackQuery();
-});
-
-bot.callbackQuery(/plant_(\d+)/, async (ctx) => {
-  const plotIndex = Number(ctx.match[1]);
-  const keyboard = new InlineKeyboard();
-  Object.entries(CROPS).forEach(([key, crop]) => {
-    keyboard.text(`${crop.name} (${crop.cost} tiền)`, `confirm_${plotIndex}_${key}`).row();
-  });
-  keyboard.text('⬅️ Quay lại', 'refresh');
-  await ctx.editMessageText('Chọn cây muốn trồng:', { reply_markup: keyboard });
-  await ctx.answerCallbackQuery();
-});
-
-bot.callbackQuery(/confirm_(\d+)_(\w+)/, async (ctx) => {
-  const plotIndex = Number(ctx.match[1]);
-  const cropKey = ctx.match[2];
-  const farm = getFarm(ctx.from.id);
-  const cropInfo = CROPS[cropKey];
-  if (farm.money < cropInfo.cost) {
-    await ctx.answerCallbackQuery({ text: 'Không đủ tiền!', show_alert: true });
-    return;
+  .plot {
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px 8px;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    min-height: 110px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
   }
-  farm.money -= cropInfo.cost;
-  farm.plots[plotIndex] = { crop: cropKey, plantedAt: Date.now() };
-  saveFarms();
-  const { text, keyboard } = renderFarmText(ctx.from.id);
-  await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
-  await ctx.answerCallbackQuery({ text: `Đã trồng ${cropInfo.name}!` });
-});
-
-bot.callbackQuery(/harvest_(\d+)/, async (ctx) => {
-  const plotIndex = Number(ctx.match[1]);
-  const farm = getFarm(ctx.from.id);
-  const plot = farm.plots[plotIndex];
-  if (!plot.crop) { await ctx.answerCallbackQuery(); return; }
-  const cropInfo = CROPS[plot.crop];
-  const elapsed = (Date.now() - plot.plantedAt) / 1000;
-  if (elapsed < cropInfo.growTime) {
-    await ctx.answerCallbackQuery({ text: 'Cây chưa chín!', show_alert: true });
-    return;
+  .plot .icon { font-size: 34px; margin-bottom: 6px; }
+  .plot .status { font-size: 12px; color: #666; margin-bottom: 8px; }
+  .plot button {
+    border: none;
+    border-radius: 8px;
+    padding: 8px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    background: #4caf50;
+    cursor: pointer;
   }
-  farm.money += cropInfo.sellPrice;
-  farm.plots[plotIndex] = { crop: null, plantedAt: null };
-  saveFarms();
-  const { text, keyboard } = renderFarmText(ctx.from.id);
-  await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
-  await ctx.answerCallbackQuery({ text: `+${cropInfo.sellPrice} tiền!` });
-});
-
-// ============================================================
-// ================== PHẦN API (cho Mini App) ==================
-// ============================================================
-
-app.get('/api/farm/:userId', (req, res) => {
-  const farm = getFarm(req.params.userId);
-  res.json(farm);
-});
-
-app.post('/api/plant', (req, res) => {
-  const { userId, plotIndex, cropKey } = req.body;
-  const farm = getFarm(userId);
-  const cropInfo = CROPS[cropKey];
-  if (!cropInfo) return res.status(400).json({ error: 'Cây không hợp lệ' });
-  if (farm.money < cropInfo.cost) return res.status(400).json({ error: 'Không đủ tiền!' });
-  farm.plots[plotIndex] = { crop: cropKey, plantedAt: Date.now() };
-  farm.money -= cropInfo.cost;
-  saveFarms();
-  res.json({ farm });
-});
-
-app.post('/api/harvest', (req, res) => {
-  const { userId, plotIndex } = req.body;
-  const farm = getFarm(userId);
-  const plot = farm.plots[plotIndex];
-  if (!plot.crop) return res.status(400).json({ error: 'Ô đất trống' });
-  const cropInfo = CROPS[plot.crop];
-  const elapsed = (Date.now() - plot.plantedAt) / 1000;
-  if (elapsed < cropInfo.growTime) return res.status(400).json({ error: 'Cây chưa chín!' });
-  farm.money += cropInfo.sellPrice;
-  farm.plots[plotIndex] = { crop: null, plantedAt: null };
-  saveFarms();
-  res.json({ farm });
-});
-
-app.get('/api/botinfo', async (req, res) => {
-  res.json({ username: bot.botInfo?.username || '' });
-});
-
-// ============================================================
-// ====================== KHỞI ĐỘNG =============================
-// ============================================================
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Web server chạy ở cổng ${PORT}`));
-
-bot.start();
-console.log('🌾 Bot nông trại đang chạy... (có Mini App + referral)');
+  .plot button.harvest { background: #ff9800; }
+  .plot button:disabled { background: #ccc; }
+  .crop-menu {
+    display: none;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
